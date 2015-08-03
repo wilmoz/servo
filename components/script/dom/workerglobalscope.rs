@@ -35,6 +35,8 @@ use url::{Url, UrlParser};
 use std::default::Default;
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 
 #[derive(JSTraceable, Copy, Clone, PartialEq)]
@@ -48,7 +50,7 @@ pub struct WorkerGlobalScope {
     eventtarget: EventTarget,
     worker_id: Option<WorkerId>,
     worker_url: Url,
-    closing: Cell<bool>,
+    closing: Arc<AtomicBool>,
     runtime: Rc<Runtime>,
     next_worker_id: Cell<WorkerId>,
     resource_task: ResourceTask,
@@ -92,7 +94,7 @@ impl WorkerGlobalScope {
             next_worker_id: Cell::new(WorkerId(0)),
             worker_id: worker_id,
             worker_url: worker_url,
-            closing: Cell::new(false),
+            closing: closing,
             runtime: runtime,
             resource_task: resource_task,
             location: Default::default(),
@@ -342,11 +344,11 @@ impl<'a> WorkerGlobalScopeHelpers for &'a WorkerGlobalScope {
     // set_closing and get_closing should only be used from self and
     // DedicatedWorkerGlobalScope.
     fn get_closing(self) -> bool {
-        self.closing.get()
+        self.closing.load(Ordering::SeqCst)
     }
 
     fn set_closing(self, closing: bool) {
-        self.closing.set(closing);
+        self.closing.store(closing, Ordering::SeqCst);
     }
 
     fn clear_timers(self) {

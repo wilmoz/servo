@@ -336,18 +336,6 @@ unsafe extern "C" fn interrupt_callback(cx: *mut JSContext) -> u8 {
         _ => panic!("global for worker is not a DedicatedWorkerGlobalScope")
     };
 
-    // Process any critical control messages. It might be nice to have two message types, each on
-    // their own channel, so that we don't need to buffer events outside of the channel.
-    while let Ok(msg) = scope.receiver.try_recv() {
-        match msg {
-            (linked_worker, ScriptMsg::Terminate) => {
-                let _ar = AutoWorkerReset::new(scope, linked_worker);
-                scope.handle_event(ScriptMsg::Terminate)
-            },
-            _ => scope.queue_event(msg)
-        }
-    }
-
     // A false response causes the script to terminate
     !scope.is_closing() as u8
 }

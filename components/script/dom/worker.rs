@@ -48,23 +48,25 @@ pub struct Worker {
     /// Sender to the Receiver associated with the DedicatedWorkerGlobalScope
     /// this Worker created.
     sender: Sender<(TrustedWorkerAddress, ScriptMsg)>,
-    closing: Cell<bool>,
+    closing: Arc<AtomicBool>,
     rt: Cell<SharedRt>
 }
 
 impl Worker {
-    fn new_inherited(global: GlobalRef, sender: Sender<(TrustedWorkerAddress, ScriptMsg)>) -> Worker {
+    fn new_inherited(global: GlobalRef, sender: Sender<(TrustedWorkerAddress, ScriptMsg)>,
+                     closing: Arc<AtomicBool>) -> Worker {
         Worker {
             eventtarget: EventTarget::new_inherited(EventTargetTypeId::Worker),
             global: GlobalField::from_rooted(&global),
             sender: sender,
-            closing: Cell::new(false),
+            closing: Arc::new(AtomicBool::new(false)),
             rt: Cell::new(SharedRt::null())
         }
     }
 
-    pub fn new(global: GlobalRef, sender: Sender<(TrustedWorkerAddress, ScriptMsg)>) -> Root<Worker> {
-        reflect_dom_object(box Worker::new_inherited(global, sender),
+    pub fn new(global: GlobalRef, sender: Sender<(TrustedWorkerAddress, ScriptMsg)>,
+               closing: Arc<AtomicBool>) -> Root<Worker> {
+        reflect_dom_object(box Worker::new_inherited(global, sender, closing),
                            global,
                            WorkerBinding::Wrap)
     }
@@ -81,7 +83,8 @@ impl Worker {
         let constellation_chan = global.constellation_chan();
 
         let (sender, receiver) = channel();
-        let worker = Worker::new(global, sender.clone());
+        let closing = Arc::new(AtomicBool::new(false));
+        let worker = Worker::new(global, sender.clone(), closing.clone());
         let worker_ref = Trusted::new(global.get_cx(), worker.r(), global.script_chan());
         let worker_id = global.get_next_worker_id();
 
@@ -109,7 +112,7 @@ impl Worker {
             worker_url, global.pipeline(), global.mem_profiler_chan(), global.devtools_chan(),
             optional_sender, devtools_receiver, worker_ref, resource_task,
             constellation_chan, global.script_chan(), sender, receiver, Some(worker_id),
-            rt_sender);
+            closing, rt_sender);
 
         // block until the JSRuntime arrives
         worker.rt.set(rt_receiver.recv().expect("Error receiving runtime from worker task"));
@@ -121,7 +124,7 @@ impl Worker {
                           data: StructuredCloneData) {
         let worker = address.root();
 
-        if worker.r().closing.get() {
+        if worker.r().closing.load(Ordering::SeqCst) {
             return
         }
 
@@ -150,7 +153,7 @@ impl Worker {
                                 filename: DOMString, lineno: u32, colno: u32) {
         let worker = address.root();
 
-        if worker.r().closing.get() {
+        if worker.r().closing.load(Ordering::SeqCst) {
             return
         }
 
@@ -177,15 +180,9 @@ impl<'a> WorkerMethods for &'a Worker {
 
     // https://html.spec.whatwg.org/multipage/#terminate-a-worker
     fn Terminate(self) {
-        if self.closing.get() {
+        if self.closing.swap(true, Ordering::SeqCst) {
             return;
         }
-
-        self.closing.set(true);
-
-        let address = Trusted::new(self.global.root().r().get_cx(), self,
-                                   self.global.root().r().script_chan().clone());
-        self.sender.send((address, ScriptMsg::Terminate)).unwrap();
 
         self.rt.get().request_interrupt();
     }
