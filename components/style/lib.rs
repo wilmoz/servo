@@ -9,7 +9,6 @@
 #![feature(custom_derive)]
 #![feature(hasher_write)]
 #![feature(plugin)]
-#![feature(slice_position_elem)]
 #![feature(vec_push_all)]
 
 #![plugin(serde_macros)]
